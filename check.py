@@ -6,47 +6,110 @@ import time
 import os
 import subprocess
 import itertools
+from datetime import datetime
 
-nb = 200 # increase if error given
 
-with open('events.ndjson', 'r') as f:
-    events = [json.loads(line) for line in f.read().splitlines()[:-1]]
+NB = 200  # increase if error given
+
+NAME_MAP = {
+    "FIDE CCC & NACCL World Fischer Random": "CCC & NACCL",
+    "FIDE Offerspill World Fischer Random": "Offerspill",
+}
+
+os.makedirs("events", exist_ok=True)
+
+if not os.path.isfile("events.ndjson"):
+    print("Downloading fide events list")
+    with open("events.ndjson", "w") as f:
+        for line in requests.get("https://lichess.org/api/user/fide/tournament/created", stream=True).iter_lines():
+            line = line.decode("utf-8").strip()
+            e = json.loads(line)
+            if "World Fischer Random" not in e["fullName"]:
+                break
+            print(line, file=f)
+    time.sleep(2)
+
+with open("events.ndjson", "r") as f:
+    events = [json.loads(line) for line in f.read().splitlines()]
 
 now = time.time() * 1000
-completed = list(filter(lambda x: x['finishesAt'] <= now , events))
-completed_ids = [event['id'] for event in sorted(completed, key=lambda d: d['startsAt'])]
+completed_events = [e for e in sorted(events, key=lambda e: e["startsAt"]) if e["finishesAt"] <= now]
 
-qualified_players = set()
 
-def getEventResults(event):
-    if not os.path.exists(f'{event}.ndjson') or int(subprocess.check_output(['wc', '-l', f'{event}.ndjson']).split()[0]) < nb:
-        headers = {'Accept': 'application/x-ndjson', 'Content-Type': 'application/x-ndjson'}
-        if os.path.exists('token'):
-            with open('token', 'r') as f:
+def get_top_rankers(event):
+    event = event["id"]
+    fname = f"events/{event}.ndjson"
+    if not os.path.isfile(fname) or int(subprocess.check_output(["wc", "-l", fname]).split()[0]) < NB:
+        headers = {
+            "Accept": "application/x-ndjson",
+        }
+        if os.path.isfile("token"):
+            with open("token", "r") as f:
                 tokendata = f.read()
-            headers['Authorization'] = f'Bearer {tokendata}'
-        results = requests.get(f'https://lichess.org/api/tournament/{event}/results?nb={nb}', headers=headers).text
-        with open(f'{event}.ndjson', 'w') as f:
+            headers["Authorization"] = f"Bearer {tokendata}"
+        results = requests.get(
+            f"https://lichess.org/api/tournament/{event}/results?nb={NB}",
+            headers=headers,
+        ).text
+        with open(fname, "w") as f:
             f.write(results)
-    with open(f'{event}.ndjson', 'r') as f:
-        results = [json.loads(line) for line in f.read().splitlines()[:-1]]
+        time.sleep(5)
+    with open(fname, "r") as f:
+        results = [json.loads(line) for line in f.read().splitlines()]
     return results
 
-for event in completed_ids:
-    results = getEventResults(event)
-    time.sleep(2)
+
+qualified_players = set()
+warn = set()
+is_banned = {}
+
+# if os.path.isfile("banned.json"):
+#     with open("banned.json") as f:
+#         is_banned = json.load(f)
+
+
+# def load_profile_info(players):
+#     players = [p["username"] for p in players if p["username"] not in is_banned]
+#     if players:
+#         profiles = requests.post("https://lichess.org/api/users", data=",".join(players)).json()
+#         for p in profiles:
+#             is_banned[p["username"]] = (
+#                 p.get("profile", {}).get("country") in ("RU", "BY")
+#                 or p.get("disabled", False)
+#                 or p.get("tosViolation", False)
+#             )
+
+#         with open("banned.json", "w") as f:
+#             json.dump(is_banned, f)
+#         time.sleep(5)
+
+
+for event in completed_events:
+    players = [
+        p
+        for p in get_top_rankers(event)
+        if ("title" not in p or p["title"] == "LM") and p["username"] not in qualified_players
+    ]
+    # load_profile_info(players)
+
+    print()
+    print(
+        f"#### [{NAME_MAP[event['fullName']]} Qualifier — {datetime.utcfromtimestamp(event['startsAt'] // 1000):%d. %B %H:00}](https://lichess.org/tournament/{event['id']})"
+    )
+
     added = 0
-    for n, player in enumerate(results):
-        if player.get('title') and player.get('title') != 'LM':
-            continue
-        if player['username'] in qualified_players:
-            continue
-        qualified_players.add(player['username'])
+    for p in players:
+        # if is_banned[p["username"]]:
+        #     warn.add(p["username"])
+        #     continue
+        qualified_players.add(p["username"])
         added += 1
+        print(f"{added}. {p['username']}")
         if added == 50:
             break
-        if n == 199:
-            print('Increase nb players pulled in parameter at the top of the file')
+    else:
+        print("Error: Increase NB players pulled in parameter at the top of the file")
+
 
 def chunked_iterable(iterable, size):
     it = iter(iterable)
@@ -56,20 +119,15 @@ def chunked_iterable(iterable, size):
             break
         yield chunk
 
-warn = set()
 
-for chunk in chunked_iterable(list(qualified_players), 300):
-    data = ','.join(chunk)
-    headers = {'Content-Type': 'text/plain'}
-    profiles = requests.post('https://lichess.org/api/users', data=data)
+for chunk in chunked_iterable(qualified_players, 300):
+    profiles = requests.post("https://lichess.org/api/users", data=",".join(chunk))
     for player in profiles.json():
-        if not player.get('profile') or not player['profile'].get('country'):
-            continue
-        if player['profile']['country'] in ('RU', 'BY'):
-            warn.add(player['username'])
+        if player.get("profile", {}).get("country") in ("RU", "BY"):
+            warn.add(player["username"])
     time.sleep(2)
 
-print("The following players qualified so far:")
-print(qualified_players)
+print()
 print("The following players should be warned about RU/BY flags:")
-print(warn)
+for p in sorted(warn, key=str.lower):
+    print(p)
