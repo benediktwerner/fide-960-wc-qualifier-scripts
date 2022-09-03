@@ -45,7 +45,8 @@ completed_events = [e for e in sorted(events, key=lambda e: e["startsAt"]) if e[
 def get_top_rankers(event):
     event = event["id"]
     fname = f"events/{event}.ndjson"
-    if not os.path.isfile(fname) or int(subprocess.check_output(["wc", "-l", fname]).split()[0]) < NB:
+    # if not os.path.isfile(fname) or int(subprocess.check_output(["wc", "-l", fname]).split()[0]) < NB:
+    if True:
         headers = {
             "Accept": "application/x-ndjson",
         }
