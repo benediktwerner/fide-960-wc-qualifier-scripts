@@ -9,7 +9,11 @@ import itertools
 from datetime import datetime
 
 
-NB = 200  # increase if error given
+NB = 1000  # increase if error given
+NUM_QUALIFY = 500
+
+EVENTS_FILE = "events2.ndjson"
+EVENTS_CREATOR = "konstantinos07"
 
 NAME_MAP = {
     "FIDE CCC & NACCL World Fischer Random": "CCC & NACCL",
@@ -18,18 +22,20 @@ NAME_MAP = {
 
 os.makedirs("events", exist_ok=True)
 
-if not os.path.isfile("events.ndjson"):
+if not os.path.isfile(EVENTS_FILE):
     print("Downloading fide events list")
-    with open("events.ndjson", "w") as f:
-        for line in requests.get("https://lichess.org/api/user/fide/tournament/created", stream=True).iter_lines():
+    with open(EVENTS_FILE, "w") as f:
+        for line in requests.get(
+            f"https://lichess.org/api/user/{EVENTS_CREATOR}/tournament/created", stream=True
+        ).iter_lines():
             line = line.decode("utf-8").strip()
             e = json.loads(line)
             if "World Fischer Random" not in e["fullName"]:
-                break
+                continue
             print(line, file=f)
     time.sleep(2)
 
-with open("events.ndjson", "r") as f:
+with open(EVENTS_FILE, "r") as f:
     events = [json.loads(line) for line in f.read().splitlines()]
 
 now = time.time() * 1000
@@ -60,7 +66,8 @@ def get_top_rankers(event):
 
 
 qualified_players = set()
-warn = set()
+warn_rus = set()
+warn_banned = set()
 is_banned = {}
 
 # if os.path.isfile("banned.json"):
@@ -85,27 +92,20 @@ is_banned = {}
 
 
 for event in completed_events:
-    players = [
-        p
-        for p in get_top_rankers(event)
-        if ("title" not in p or p["title"] == "LM") and p["username"] not in qualified_players
-    ]
+    players = [p for p in get_top_rankers(event) if p["username"] not in qualified_players]
     # load_profile_info(players)
 
     print()
     print(
-        f"#### [{NAME_MAP[event['fullName']]} Qualifier — {datetime.utcfromtimestamp(event['startsAt'] // 1000):%d. %B %H:00}](https://lichess.org/tournament/{event['id']})"
+        f"#### [{event['fullName']} — {datetime.utcfromtimestamp(event['startsAt'] // 1000):%d. %B %H:00}](https://lichess.org/tournament/{event['id']})"
     )
 
     added = 0
     for p in players:
-        # if is_banned[p["username"]]:
-        #     warn.add(p["username"])
-        #     continue
         qualified_players.add(p["username"])
         added += 1
         print(f"{added}. {p['username']}")
-        if added == 50:
+        if added == NUM_QUALIFY:
             break
     else:
         print("Error: Increase NB players pulled in parameter at the top of the file")
@@ -124,10 +124,17 @@ for chunk in chunked_iterable(qualified_players, 300):
     profiles = requests.post("https://lichess.org/api/users", data=",".join(chunk))
     for player in profiles.json():
         if player.get("profile", {}).get("country") in ("RU", "BY"):
-            warn.add(player["username"])
+            warn_rus.add(player["username"])
+        if player.get("disabled", False) or player.get("tosViolation", False):
+            warn_banned.add(player["username"])
     time.sleep(2)
 
 print()
 print("The following players should be warned about RU/BY flags:")
-for p in sorted(warn, key=str.lower):
+for p in sorted(warn_rus, key=str.lower):
+    print(p)
+
+print()
+print("The following players are closed or banned:")
+for p in sorted(warn_banned, key=str.lower):
     print(p)
