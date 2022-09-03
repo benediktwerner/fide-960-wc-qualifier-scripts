@@ -90,6 +90,7 @@ is_banned = {}
 #             json.dump(is_banned, f)
 #         time.sleep(5)
 
+print("Checking top rankers")
 
 for event in completed_events:
     players = [p for p in get_top_rankers(event) if p["username"] not in qualified_players]
@@ -119,6 +120,8 @@ def chunked_iterable(iterable, size):
             break
         yield chunk
 
+
+print("Checking flags and bans")
 
 for chunk in chunked_iterable(qualified_players, 300):
     profiles = requests.post("https://lichess.org/api/users", data=",".join(chunk))
