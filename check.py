@@ -4,7 +4,6 @@ import requests
 import json
 import time
 import os
-import subprocess
 import itertools
 from datetime import datetime
 
